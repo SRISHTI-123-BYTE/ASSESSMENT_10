@@ -10,10 +10,10 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = 'hsri123/road-hazard-portal'
-        DEPLOYMENT = 'road-hazard-portal'
-    }
-
+    PATH = "C:\\Users\\srish\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin;${env.PATH}"
+    IMAGE_NAME = 'hsri123/road-hazard-portal'
+    DEPLOYMENT = 'road-hazard-portal'
+}
     stages {
         stage('Checkout and Validate') {
             steps {
