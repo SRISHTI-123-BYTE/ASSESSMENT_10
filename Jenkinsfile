@@ -24,6 +24,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout and Validate') {
             steps {
                 checkout scm
@@ -32,7 +33,7 @@ pipeline {
                 bat 'if not exist Dockerfile exit /b 1'
                 bat 'if not exist deployment.yaml exit /b 1'
 
-                echo 'All required files are present.'
+                echo 'All required project files are present.'
             }
         }
 
@@ -55,7 +56,9 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 bat 'docker --version'
-                bat "docker build -t ${env.IMAGE_NAME}:${params.IMAGE_TAG} ."
+                bat 'docker build -t %IMAGE_NAME%:%IMAGE_TAG% .'
+
+                echo 'Docker image built successfully.'
             }
         }
 
@@ -71,55 +74,55 @@ pipeline {
                     powershell '''
                         $ErrorActionPreference = "Stop"
 
-                        if ([string]::IsNullOrWhiteSpace($env:DOCKER_USER)) {
-                            throw "Docker Hub username is empty."
+                        $docker = "C:\\Users\\srish\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe"
+
+                        if (-not (Test-Path $docker)) {
+                            throw "Docker executable was not found at the configured path."
                         }
 
-                        if ([string]::IsNullOrEmpty($env:DOCKER_PASS)) {
-                            throw "Docker Hub token is empty."
-                        }
-
-                        $docker = (Get-Command docker.exe).Source
-
-                        $psi = New-Object System.Diagnostics.ProcessStartInfo
-                        $psi.FileName = $docker
-                        $psi.Arguments = "login --username `"$env:DOCKER_USER`" --password-stdin"
-                        $psi.UseShellExecute = $false
-                        $psi.RedirectStandardInput = $true
-                        $psi.RedirectStandardOutput = $true
-                        $psi.RedirectStandardError = $true
-                        $psi.CreateNoWindow = $true
+                        $start = New-Object System.Diagnostics.ProcessStartInfo
+                        $start.FileName = $docker
+                        $start.Arguments = "login --username $env:DOCKER_USER --password-stdin"
+                        $start.UseShellExecute = $false
+                        $start.RedirectStandardInput = $true
+                        $start.RedirectStandardOutput = $true
+                        $start.RedirectStandardError = $true
+                        $start.CreateNoWindow = $true
 
                         $process = New-Object System.Diagnostics.Process
-                        $process.StartInfo = $psi
+                        $process.StartInfo = $start
+
                         [void]$process.Start()
 
-                        $bytes = [System.Text.Encoding]::UTF8.GetBytes(
-                            $env:DOCKER_PASS + "`n"
-                        )
+                        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+                        $stderrTask = $process.StandardError.ReadToEndAsync()
 
-                        $process.StandardInput.BaseStream.Write(
-                            $bytes, 0, $bytes.Length
-                        )
+                        $process.StandardInput.WriteLine($env:DOCKER_PASS)
                         $process.StandardInput.Close()
 
-                        $stdout = $process.StandardOutput.ReadToEnd()
-                        $stderr = $process.StandardError.ReadToEnd()
                         $process.WaitForExit()
+
+                        $stdout = $stdoutTask.Result
+                        $stderr = $stderrTask.Result
 
                         if ($stdout) {
                             Write-Output $stdout
                         }
 
                         if ($process.ExitCode -ne 0) {
-                            Write-Error "Docker Hub login failed. Verify the saved token and account."
-                            exit 1
+                            if ($stderr) {
+                                Write-Output $stderr
+                            }
+
+                            throw "Docker Hub login failed. Verify the Jenkins credential and token."
                         }
 
-                        Write-Output "Docker Hub login succeeded."
+                        Write-Output "Docker Hub login successful."
                     '''
 
-                    bat "docker push ${env.IMAGE_NAME}:${params.IMAGE_TAG}"
+                    bat 'docker push %IMAGE_NAME%:%IMAGE_TAG%'
+
+                    echo 'Docker image pushed to Docker Hub.'
                 }
             }
         }
@@ -134,11 +137,12 @@ pipeline {
                 ]) {
                     powershell '''
                         $ErrorActionPreference = "Stop"
+
                         $env:KUBECONFIG = $env:KUBECONFIG_FILE
 
                         kubectl config current-context
                         if ($LASTEXITCODE -ne 0) {
-                            throw "Cannot access Kubernetes context."
+                            throw "Cannot access the Kubernetes context."
                         }
 
                         kubectl apply -f deployment.yaml
@@ -146,34 +150,42 @@ pipeline {
                             throw "Failed to apply Kubernetes manifests."
                         }
 
-                        kubectl set image deployment/road-hazard-portal road-hazard-portal="${env:IMAGE_NAME}:${env:IMAGE_TAG}" -n $env:K8S_NAMESPACE
+                        kubectl set image deployment/$env:DEPLOYMENT road-hazard-portal="$env:IMAGE_NAME`:$env:IMAGE_TAG" -n $env:K8S_NAMESPACE
                         if ($LASTEXITCODE -ne 0) {
-                            throw "Failed to update deployment image."
+                            throw "Failed to update the deployment image."
                         }
 
-                        if ("${env:ROLLBACK_DEMO}" -eq "true") {
+                        if ($env:ROLLBACK_DEMO -eq "true") {
                             Write-Output "Starting rollback demonstration."
 
-                            kubectl set image deployment/road-hazard-portal road-hazard-portal="${env:IMAGE_NAME}:does-not-exist" -n $env:K8S_NAMESPACE
+                            kubectl set image deployment/$env:DEPLOYMENT road-hazard-portal="$env:IMAGE_NAME`:does-not-exist" -n $env:K8S_NAMESPACE
                             if ($LASTEXITCODE -ne 0) {
-                                throw "Failed to set test image."
+                                throw "Could not set the test image for rollback."
                             }
 
                             Start-Sleep -Seconds 15
 
-                            kubectl rollout undo deployment/road-hazard-portal -n $env:K8S_NAMESPACE
+                            kubectl rollout undo deployment/$env:DEPLOYMENT -n $env:K8S_NAMESPACE
                             if ($LASTEXITCODE -ne 0) {
-                                throw "Rollback failed."
+                                throw "Kubernetes rollback failed."
                             }
                         }
 
-                        kubectl rollout status deployment/road-hazard-portal --timeout=180s -n $env:K8S_NAMESPACE
+                        kubectl rollout status deployment/$env:DEPLOYMENT --timeout=180s -n $env:K8S_NAMESPACE
                         if ($LASTEXITCODE -ne 0) {
-                            throw "Deployment rollout failed."
+                            throw "Deployment rollout did not complete successfully."
                         }
 
+                        Write-Output "Deployment status:"
                         kubectl get deployments -n $env:K8S_NAMESPACE
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Could not retrieve deployments."
+                        }
+
+                        Write-Output "Pod status:"
                         kubectl get pods -l app=road-hazard-portal -n $env:K8S_NAMESPACE
+
+                        Write-Output "Service status:"
                         kubectl get services road-hazard-portal-service -n $env:K8S_NAMESPACE
                     '''
                 }
@@ -187,7 +199,7 @@ pipeline {
         }
 
         failure {
-            echo 'Pipeline failed. Review the first error in Console Output.'
+            echo 'Pipeline failed. Check the first error in Console Output.'
         }
 
         always {
