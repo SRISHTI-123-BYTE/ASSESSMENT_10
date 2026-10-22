@@ -1,0 +1,185 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Road Hazard Reporting Portal</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f3f5f9;
+  color: #263248;
+}
+header {
+  background: #172554;
+  color: white;
+  padding: 24px 6%;
+}
+header h1 { margin: 0 0 8px; }
+header p { margin: 0; color: #dbeafe; }
+main { max-width: 1150px; margin: 28px auto; padding: 0 18px; }
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.card {
+  background: white;
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 2px 8px #0000000d;
+}
+.number { font-size: 30px; font-weight: bold; color: #2563eb; }
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+select, input, button {
+  padding: 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+}
+button {
+  background: #2563eb;
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+button:hover { background: #1d4ed8; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: white; }
+th, td {
+  padding: 14px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+th { background: #eaf0fb; }
+.badge { padding: 5px 9px; border-radius: 12px; font-size: 12px; }
+.Open { background: #fee2e2; color: #991b1b; }
+.Progress { background: #fef3c7; color: #92400e; }
+.Resolved { background: #dbeafe; color: #1e40af; }
+footer { text-align: center; padding: 24px; color: #64748b; }
+@media(max-width:650px) {
+  .summary { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Road Hazard Reporting Portal</h1>
+  <p>Municipal Corporation | Report tracking and resolution status</p>
+</header>
+
+<main>
+  <section class="summary">
+    <div class="card">
+      <p>Total Complaints</p>
+      <div class="number" id="total">5</div>
+    </div>
+    <div class="card">
+      <p>Open Complaints</p>
+      <div class="number" id="open">2</div>
+    </div>
+    <div class="card">
+      <p>Resolved Complaints</p>
+      <div class="number" id="resolved">1</div>
+    </div>
+  </section>
+
+  <div class="card">
+    <h2>Reported Road Hazards</h2>
+    <div class="controls">
+      <select id="categoryFilter" onchange="renderComplaints()">
+        <option value="All">All Categories</option>
+        <option value="Pothole">Pothole</option>
+        <option value="Damaged Streetlight">Damaged Streetlight</option>
+        <option value="Waterlogging">Waterlogging</option>
+      </select>
+      <input id="search" placeholder="Search by ID or location"
+             oninput="renderComplaints()">
+      <button onclick="resetFilters()">Reset Filters</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Complaint ID</th>
+            <th>Category</th>
+            <th>Location</th>
+            <th>Report Date</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="complaints"></tbody>
+      </table>
+    </div>
+    <p id="resultCount"></p>
+  </div>
+</main>
+
+<footer>Road Hazard Reporting Portal | Sample assessment data</footer>
+
+<script>
+const reports = [
+  {id:"RH001",category:"Pothole",location:"Gandhi Road",
+   date:"2026-10-15",status:"Open"},
+  {id:"RH002",category:"Damaged Streetlight",location:"Anna Nagar",
+   date:"2026-10-16",status:"In Progress"},
+  {id:"RH003",category:"Waterlogging",location:"Market Street",
+   date:"2026-10-17",status:"Resolved"},
+  {id:"RH004",category:"Pothole",location:"College Road",
+   date:"2026-10-18",status:"Open"},
+  {id:"RH005",category:"Damaged Streetlight",location:"Bus Stand",
+   date:"2026-10-19",status:"In Progress"}
+];
+
+function renderComplaints() {
+  const category = document.getElementById("categoryFilter").value;
+  const search = document.getElementById("search").value.toLowerCase();
+
+  const filtered = reports.filter(r =>
+    (category === "All" || r.category === category) &&
+    (r.id.toLowerCase().includes(search) ||
+     r.location.toLowerCase().includes(search))
+  );
+
+  document.getElementById("complaints").innerHTML =
+    filtered.map(r => {
+      const statusClass = r.status === "In Progress" ? "Progress" : r.status;
+      return `<tr>
+        <td>${r.id}</td>
+        <td>${r.category}</td>
+        <td>${r.location}</td>
+        <td>${r.date}</td>
+        <td><span class="badge ${statusClass}">${r.status}</span></td>
+      </tr>`;
+    }).join("");
+
+  document.getElementById("resultCount").textContent =
+    `Showing ${filtered.length} of ${reports.length} complaints`;
+
+  document.getElementById("total").textContent = reports.length;
+  document.getElementById("open").textContent =
+    reports.filter(r => r.status === "Open").length;
+  document.getElementById("resolved").textContent =
+    reports.filter(r => r.status === "Resolved").length;
+}
+
+function resetFilters() {
+  document.getElementById("categoryFilter").value = "All";
+  document.getElementById("search").value = "";
+  renderComplaints();
+}
+
+renderComplaints();
+</script>
+</body>
+</html>
