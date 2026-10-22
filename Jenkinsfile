@@ -8,10 +8,11 @@ pipeline {
             defaultValue: '1',
             description: 'Docker image version'
         )
+
         booleanParam(
             name: 'ROLLBACK_DEMO',
             defaultValue: false,
-            description: 'Deploy a faulty image to demonstrate automatic rollback'
+            description: 'Demonstrate Kubernetes rollback'
         )
     }
 
@@ -31,7 +32,7 @@ pipeline {
                 bat 'if not exist Dockerfile exit /b 1'
                 bat 'if not exist deployment.yaml exit /b 1'
 
-                echo 'All required project files are present.'
+                echo 'All project files are present.'
             }
         }
 
@@ -69,11 +70,29 @@ pipeline {
                 ]) {
                     powershell '''
                         $ErrorActionPreference = "Stop"
+
+                        Write-Output "Checking Docker Hub credential binding..."
+                        Write-Output "Username received: $env:DOCKER_USER"
+
+                        if ([string]::IsNullOrWhiteSpace($env:DOCKER_USER)) {
+                            throw "Docker Hub username is empty."
+                        }
+
+                        if ([string]::IsNullOrEmpty($env:DOCKER_PASS)) {
+                            throw "Docker Hub token is empty."
+                        }
+
+                        Write-Output "Token received by Jenkins."
+                        Write-Output "Attempting Docker Hub login..."
+
                         $env:DOCKER_PASS |
                             docker login --username $env:DOCKER_USER --password-stdin
+
                         if ($LASTEXITCODE -ne 0) {
-                            exit $LASTEXITCODE
+                            throw "Docker Hub login failed. Verify the saved credential and token."
                         }
+
+                        Write-Output "Docker Hub login succeeded."
                     '''
 
                     bat "docker push ${env.IMAGE_NAME}:${params.IMAGE_TAG}"
@@ -94,35 +113,44 @@ pipeline {
                         $env:KUBECONFIG = $env:KUBECONFIG_FILE
 
                         kubectl config current-context
-                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Cannot access the Kubernetes context."
+                        }
 
                         kubectl apply -f deployment.yaml
-                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Kubernetes manifest application failed."
+                        }
 
-                        kubectl set image deployment/road-hazard-portal road-hazard-portal="${env:IMAGE_NAME}:${env:IMAGE_TAG}" -n default
-                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                        kubectl set image deployment/road-hazard-portal road-hazard-portal="${env:IMAGE_NAME}:${env:IMAGE_TAG}" -n $env:K8S_NAMESPACE
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Could not update the deployment image."
+                        }
 
                         if ("${env:ROLLBACK_DEMO}" -eq "true") {
-                            kubectl set image deployment/road-hazard-portal road-hazard-portal="${env:IMAGE_NAME}:does-not-exist" -n default
-                            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                            Write-Output "Starting rollback demonstration..."
 
-                            Start-Sleep -Seconds 10
-                            kubectl rollout undo deployment/road-hazard-portal -n default
-                            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                            kubectl set image deployment/road-hazard-portal road-hazard-portal="${env:IMAGE_NAME}:does-not-exist" -n $env:K8S_NAMESPACE
+                            if ($LASTEXITCODE -ne 0) {
+                                throw "Could not set the test image."
+                            }
 
-                            kubectl rollout status deployment/road-hazard-portal --timeout=120s -n default
-                            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                            Start-Sleep -Seconds 15
 
-                            Write-Output "Rollback demonstration completed."
-                        }
-                        else {
-                            kubectl rollout status deployment/road-hazard-portal --timeout=180s -n default
-                            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                            kubectl rollout undo deployment/road-hazard-portal -n $env:K8S_NAMESPACE
+                            if ($LASTEXITCODE -ne 0) {
+                                throw "Kubernetes rollback command failed."
+                            }
                         }
 
-                        kubectl get deployments -n default
-                        kubectl get pods -l app=road-hazard-portal -n default
-                        kubectl get services road-hazard-portal-service -n default
+                        kubectl rollout status deployment/road-hazard-portal --timeout=180s -n $env:K8S_NAMESPACE
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Deployment rollout did not complete successfully."
+                        }
+
+                        kubectl get deployments -n $env:K8S_NAMESPACE
+                        kubectl get pods -l app=road-hazard-portal -n $env:K8S_NAMESPACE
+                        kubectl get services road-hazard-portal-service -n $env:K8S_NAMESPACE
                     '''
                 }
             }
